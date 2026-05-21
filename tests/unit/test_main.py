@@ -1,23 +1,69 @@
-import app.store as store
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from app.api import app
-from app.store import build_fruit_response
+from app.database import Base, get_db
+from app.models import FruitEntity
+from app.store import build_fruit_response, seed_fruits
+
+
+TEST_DATABASE_URL = "sqlite://"
+
+test_engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool
+)
+
+TestingSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=test_engine
+)
+
+
+def override_get_db():
+    db = TestingSessionLocal()
+
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def setup_test_database():
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+
+    db = TestingSessionLocal()
+
+    try:
+        seed_fruits(db)
+    finally:
+        db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    yield
+
+    app.dependency_overrides.clear()
 
 
 client = TestClient(app)
 
 
-def reset_store():
-    store._fruits = {
-        1: {"id": 1, "name": "Apple", "price": 1.5, "in_season": True},
-        2: {"id": 2, "name": "Banana", "price": 0.9, "in_season": True},
-        3: {"id": 3, "name": "Orange", "price": 2.0, "in_season": False}
-    }
-    store._next_id = 4
+def clear_fruits():
+    db = TestingSessionLocal()
 
-
-def setup_function():
-    reset_store()
+    try:
+        db.query(FruitEntity).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def test_build_fruit_response_returns_expected_structure():
@@ -111,7 +157,7 @@ def test_delete_unknown_fruit_returns_404():
 
 
 def test_get_cheapest_when_no_fruits_returns_404():
-    store._fruits = {}
+    clear_fruits()
 
     response = client.get("/fruits/cheapest")
 
