@@ -1,0 +1,8 @@
+aws_region      = "eu-central-1"
+project_name    = "fruitapi"
+container_image = "ghcr.io/togoevidato/intro-to-devops-starter:latest"
+allowed_cidr    = "YOUR_PUBLIC_IP/32"
+
+db_name     = "fruitapi"
+db_user     = "fruitapi"
+db_password = "CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD"
