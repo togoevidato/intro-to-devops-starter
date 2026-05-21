@@ -1,0 +1,37 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: fruitapi-mysql
+    environment:
+      MYSQL_DATABASE: fruitapi
+      MYSQL_USER: fruitapi
+      MYSQL_PASSWORD: fruitapi_password
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - fruitapi_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    container_name: fruitapi-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: fruitapi
+      DB_USER: fruitapi
+      DB_PASSWORD: fruitapi_password
+    ports:
+      - "8000:8000"
+    restart: on-failure
+
+volumes:
+  fruitapi_mysql_data:
