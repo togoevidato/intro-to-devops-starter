@@ -86,17 +86,43 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_security_group" "alb" {
+  name        = "${local.name}-alb-sg"
+  description = "FruitAPI ALB security group"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "HTTP from my IP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_cidr]
+  }
+
+  egress {
+    description = "Allow outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name}-alb-sg"
+  }
+}
+
 resource "aws_security_group" "app" {
   name        = "${local.name}-app-sg"
   description = "FruitAPI ECS task security group"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "FruitAPI from my IP"
-    from_port   = 8000
-    to_port     = 8000
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    description     = "FruitAPI from ALB"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
   }
 
   egress {
@@ -171,6 +197,52 @@ resource "aws_db_instance" "mysql" {
 
   tags = {
     Name = "${local.name}-mysql"
+  }
+}
+
+resource "aws_lb" "app" {
+  name               = "${local.name}-alb"
+  load_balancer_type = "application"
+  internal           = false
+
+  security_groups = [aws_security_group.alb.id]
+  subnets         = aws_subnet.public[*].id
+
+  tags = {
+    Name = "${local.name}-alb"
+  }
+}
+
+resource "aws_lb_target_group" "app" {
+  name        = "${local.name}-tg"
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    matcher             = "200"
+    interval            = 10
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+
+  tags = {
+    Name = "${local.name}-tg"
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
   }
 }
 
@@ -299,8 +371,16 @@ resource "aws_ecs_service" "app" {
   name            = "${local.name}-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.app.arn
-  desired_count   = 1
+  desired_count   = 2
   launch_type     = "FARGATE"
+
+  health_check_grace_period_seconds = 60
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = local.name
+    container_port   = 8000
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -309,6 +389,7 @@ resource "aws_ecs_service" "app" {
   }
 
   depends_on = [
-    aws_db_instance.mysql
+    aws_db_instance.mysql,
+    aws_lb_listener.http
   ]
 }
