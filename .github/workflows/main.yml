@@ -1,4 +1,4 @@
-name: Main CI
+name: Main CI/CD
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 jobs:
-  build-test-push:
+  build-test-push-deploy:
     runs-on: ubuntu-latest
 
     env:
@@ -43,7 +43,7 @@ jobs:
       - name: Start Docker Compose stack
         run: docker compose up -d
 
-      - name: Wait for FruitAPI health check
+      - name: Wait for local FruitAPI health check
         run: |
           for i in {1..30}; do
             if curl -fsS http://127.0.0.1:8000/health; then
@@ -71,3 +71,35 @@ jobs:
         run: |
           docker push $IMAGE_NAME:${{ github.sha }}
           docker push $IMAGE_NAME:latest
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy latest image to ECS
+        run: |
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --service "${{ vars.ECS_SERVICE_NAME }}" \
+            --force-new-deployment
+
+      - name: Wait for ECS service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}"
+
+      - name: Smoke test deployed ALB
+        run: |
+          for i in {1..30}; do
+            if curl -fsS "${{ vars.ALB_URL }}/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "ALB smoke test failed"
+          exit 1
